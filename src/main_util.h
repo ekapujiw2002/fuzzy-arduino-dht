@@ -119,7 +119,7 @@ void processFuzzySystem() {
           fuzzy_main_obj->update(dht_sensor_output.temperature,
                                  dht_sensor_output.humidity);
 
-          t_relay_start_on = 0;
+          t_relay_start_on = rtc.getUnixTime(rtc.getTime());
 
           APP_DEBUG_PRINT(String("DURATION = ") +
                           String(fuzzy_main_obj->duration_out));
@@ -134,20 +134,19 @@ void processFuzzySystem() {
  * @method processRelayOnOff
  */
 void processRelayOnOff() {
-  if (fuzzy_main_obj->duration_out > 0.0) {
-    if (t_relay_start_on == 0) {
-      t_relay_start_on = millis();
-    }
+  uint32_t tick_n = rtc.getUnixTime(rtc.getTime());
+
 
     digitalWrite(PIN_RELAY,
-                 ((millis() - t_relay_start_on) <=
-                  ((uint32_t)(fuzzy_main_obj->duration_out * 1000.0))));
-  } else {
-    if (t_relay_start_on != 0) {
-      t_relay_start_on = 0;
-    }
-    digitalWrite(PIN_RELAY, LOW);
-  }
+               ((fuzzy_main_obj->duration_out > 0.0) &&
+                ((tick_n - t_relay_start_on) <=
+                 ((uint32_t)(fuzzy_main_obj->duration_out * 60.0)))));
+  // } else {
+  //   if (t_relay_start_on != 0) {
+  //     t_relay_start_on = 0;
+
+  //   digitalWrite(PIN_RELAY, LOW);
+  // }
 }
 
 /**
@@ -273,11 +272,11 @@ void main_app_loop() {
   // dht last time
   processDHTSensor();
 
+  processFuzzySystem();
   // relay on or off
   processRelayOnOff();
 
   // time to process
-  processFuzzySystem();
 
   // fuzzy last time
   // if (t_now - t_last_fuzzy >= 5000) {
