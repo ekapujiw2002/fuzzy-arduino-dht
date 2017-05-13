@@ -21,24 +21,25 @@
 #define APP_PORT_DEBUG Serial
 
 // pin setting
-#define PIN_DHT 8
-#define PIN_RELAY 9
+#define PIN_DHT 2
+#define PIN_RELAY A3
 
 // global var
 // rtc
 DS3231 rtc(SDA, SCL);
 
 // dht sensor
-DHT dht_sensor(PIN_DHT, DHT22);
+DHT dht_sensor(PIN_DHT, DHT11);
 dht_data_t dht_sensor_output = {0};
 
 // fuzzy object
 FuzzyDHT *fuzzy_main_obj = new FuzzyDHT();
+float duration_siram_active = 0.0;
 
 // lc dobj
-LiquidCrystal lcd_obj(12, 11, 4, 5, 6, 7); // Creates an LC object. Parameters:
-                                           // (rs, enable, d4, d5, d6, d7) , rw
-                                           // to ground
+LiquidCrystal lcd_obj(8, 9, 4, 5, 6, 7); // Creates an LC object. Parameters:
+                                         // (rs, enable, d4, d5, d6, d7) , rw
+                                         // to ground
 
 // timing var
 uint32_t t_now, t_last_dht_acquired, t_last_fuzzy, t_last_lcd_display;
@@ -51,7 +52,7 @@ uint32_t t_relay_start_on = 0;
  */
 void APP_DEBUG_PRINT(String alog) {
   char dtx[16] = {0};
-  snprintf_P(dtx, sizeof(dtx), (const char *)F("%-10u : "), millis());
+  snprintf_P(dtx, sizeof(dtx), (const char *)F("%-10lu : "), millis());
   APP_PORT_DEBUG.println(String(dtx) + alog);
 }
 
@@ -109,6 +110,10 @@ void lcd_print_data(LiquidCrystal *lcdx, Time atime, dht_data_t dht_data_out,
 void processFuzzySystem() {
   Time tx = rtc.getTime();
 
+  // do fuzzy
+  // fuzzy_main_obj->update(dht_sensor_output.temperature,
+  //                        dht_sensor_output.humidity);
+
   // 7 to 15, per 2 hours
   if ((tx.hour >= 7) && (tx.hour <= 15) && (tx.hour % 2 == 1)) {
     if (tx.min <= 0) {
@@ -118,11 +123,12 @@ void processFuzzySystem() {
         if (dht_sensor_output.status_ok) {
           fuzzy_main_obj->update(dht_sensor_output.temperature,
                                  dht_sensor_output.humidity);
+          duration_siram_active = fuzzy_main_obj->duration_out;
 
           t_relay_start_on = rtc.getUnixTime(rtc.getTime());
 
-          APP_DEBUG_PRINT(String("DURATION = ") +
-                          String(fuzzy_main_obj->duration_out));
+          // APP_DEBUG_PRINT(String("DURATION = ") +
+          //                 String(fuzzy_main_obj->duration_out));
         }
       }
     }
@@ -136,17 +142,9 @@ void processFuzzySystem() {
 void processRelayOnOff() {
   uint32_t tick_n = rtc.getUnixTime(rtc.getTime());
 
-
-    digitalWrite(PIN_RELAY,
-               ((fuzzy_main_obj->duration_out > 0.0) &&
-                ((tick_n - t_relay_start_on) <=
-                 ((uint32_t)(fuzzy_main_obj->duration_out * 60.0)))));
-  // } else {
-  //   if (t_relay_start_on != 0) {
-  //     t_relay_start_on = 0;
-
-  //   digitalWrite(PIN_RELAY, LOW);
-  // }
+  digitalWrite(PIN_RELAY, ((duration_siram_active > 0.0) &&
+                           ((tick_n - t_relay_start_on) <=
+                            ((uint32_t)(duration_siram_active * 60.0)))));
 }
 
 /**
@@ -156,8 +154,11 @@ void processRelayOnOff() {
 void processLCDDisplayData() {
   if (t_now - t_last_lcd_display >= 1000) {
     t_last_lcd_display = t_now;
-    lcd_print_data(&lcd_obj, rtc.getTime(), dht_sensor_output,
-                   fuzzy_main_obj->duration_out);
+    Time tx = rtc.getTime();
+    lcd_print_data(&lcd_obj, tx, dht_sensor_output,
+                   fuzzy_main_obj->duration_out * 60.0);
+
+    APP_DEBUG_PRINT(rtc.getDateStr() + String(" ") + rtc.getTimeStr());
   }
 }
 
@@ -172,6 +173,15 @@ void processDHTSensor() {
 
     if (!dht_sensor_output.status_ok) {
       APP_DEBUG_PRINT(F("DHT ERROR"));
+    } else {
+      fuzzy_main_obj->update(dht_sensor_output.temperature,
+                             dht_sensor_output.humidity);
+
+      APP_DEBUG_PRINT(String("TEMP = ") +
+                      String(dht_sensor_output.temperature));
+      APP_DEBUG_PRINT(String("HUM  = ") + String(dht_sensor_output.humidity));
+      APP_DEBUG_PRINT(String("DURATION = ") +
+                      String(fuzzy_main_obj->duration_out * 60.0));
     }
   }
 }
@@ -198,24 +208,6 @@ void debugTest() {
 
       if ((tempx >= 0.0) && (humx >= 0.00)) {
         fuzzy_main_obj->update(tempx, humx);
-
-        // fuzzyProcessInput(tempx, humx, &durx);
-        //
-        // APP_DEBUG_PRINT(String("TEMPFZ = ") + String(tempx) + String(" -- ")
-        // +
-        //                 String(suhu_dingin->getPertinence()) + String(" -- ")
-        //                 +
-        //                 String(suhu_normal->getPertinence()) + String(" -- ")
-        //                 +
-        //                 String(suhu_panas->getPertinence()));
-        //
-        // APP_DEBUG_PRINT(String("HUMFZ = ") + String(humx) + String(" -- ") +
-        //                 String(hum_kering->getPertinence()) + String(" -- ")
-        //                 +
-        //                 String(hum_normal->getPertinence()) + String(" -- ")
-        //                 +
-        //                 String(hum_lembab->getPertinence()));
-
         APP_DEBUG_PRINT(
             String("DURATION = ") +
             String((uint32_t)((float)fuzzy_main_obj->duration_out * 1000.0)));
@@ -247,6 +239,10 @@ void main_app_setup() {
 
   // rtc up
   rtc.begin();
+  // APP_DEBUG_PRINT(String(rtc.getUnixTime(rtc.getTime())));
+  // setup datetime
+  // rtc.setDate(13, 5, 2017);
+  // rtc.setTime(15, 51, 0);
 
   // dht up
   dht_sensor.begin();
@@ -272,7 +268,9 @@ void main_app_loop() {
   // dht last time
   processDHTSensor();
 
+  // time to process
   processFuzzySystem();
+
   // relay on or off
   processRelayOnOff();
 
